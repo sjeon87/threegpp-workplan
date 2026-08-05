@@ -1,0 +1,21 @@
+File: Work_plan_3gpp_161110.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline_Level', 'Release', 'Resource_Names', 'Start_Date', 'Finish_Date', 'Percent_Complete', 'Hyperlink', 'Status_Report', 'WI_rapporteur_name', 'WI_rapporteur_e_mail', 'Notes', 'Impacted_TSs_and_TRs', 'TSG_approved', 'PCG_approved', 'TSG_stopped', 'PCG_stopped', 'Created', 'last_modif']
+
+File: Work_plan_3gpp_161220.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline_Level', 'Release', 'Resource_Names', 'Start_Date', 'Finish_Date', 'Percent_Complete', 'Hyperlink', 'NEW FIELD: WI Summary', 'WI_rapporteur_name', 'WI_rapporteur_e_mail', 'Notes', 'Impacted_TSs_and_TRs', 'TSG_approved', 'PCG_approved', 'TSG_stopped', 'PCG_stopped', 'Created', 'last_modif']
+
+File: Work_plan_3gpp_170106.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline_Level', 'Release', 'Resource_Names', 'Start_Date', 'Finish_Date', 'Percent_Complete', 'Hyperlink', 'Status_Report', 'WI_rapporteur_name', 'WI_rapporteur_e_mail', 'Notes', 'Impacted_TSs_and_TRs', 'TSG_approved', 'PCG_approved', 'TSG_stopped', 'PCG_stopped', 'Created', 'last_modif']
+
+File: Work_plan_3gpp_190315_All.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline Level', 'Release', 'Resource Names', 'Start', 'Finish', '% Complete', 'Hyperlink', 'Status Report', 'WI rapporteur name', 'WI rapporteur e-mail', 'Notes', 'Impacted TSs and TRs', 'TSG approved', 'PCG approved', 'TSG stopped', 'PCG stopped', 'Created', 'last modif']
+
+File: Work_plan_3gpp_220322.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline Level', 'Release', 'Resource Names', 'Start', 'Finish', '%Complete', 'Hyperlink', 'Status Report', 'WI rapporteur name', 'WI rapporteur e-mail', 'Notes', 'Impacted TSs and TRs', 'TSG approved', 'PCG approved', 'TSG stopped', 'PCG stopped', 'Created', 'last modif']
+
+File: Work_plan_3gpp_220621.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'OutlineLevel', 'Release', 'ResourceNames', 'Start', 'Finish', '%Complete', 'Hyperlink', 'Status Report', 'WI rapporteur name', 'WI rapporteur e-mail', 'Notes', 'Impacted TSs and TRs', 'TSG approved', 'PCG approved', 'TSG stopped', 'PCG stopped', 'Created', 'last modif']
+
+File: Work_plan_3gpp_250930.xlsx
+Header: ['ID', 'Unique_ID', 'Name', 'Acronym', 'Outline_Level', 'Release', 'Resource_Names', 'Start', 'Finish', 'Completion', 'Hyperlink', 'Status_Report', 'WI_rapporteur_name', 'WI_rapporteur_e_mail', 'Notes', 'Impacted_TSs_and_TRs', 'TSG_approved', 'PCG_approved', 'TSG_stopped', 'PCG_stopped', 'Created', 'last_modif']
+
