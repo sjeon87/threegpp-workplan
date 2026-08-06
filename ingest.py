@@ -19,6 +19,14 @@ from pathlib import Path
 
 import requests
 from openpyxl import load_workbook
+from dotenv import load_dotenv
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import smtplib
+import ssl
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 # ── Config ──────────────────────────────────────────────────────────────
 
@@ -34,7 +42,6 @@ FILENAME_PATTERNS = [
 
 UA = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0"
 
-BASE_DIR = Path(__file__).resolve().parent
 XLSX_DIR = BASE_DIR / "xlsx"
 DB_PATH = BASE_DIR / "threegpp.sqlite3"
 
@@ -386,7 +393,7 @@ def insert_work_item(
 
     # Skip if identical record already exists
     if record_exists(conn, chash):
-        return False
+        return None
 
     conn.execute(
         """INSERT INTO work_plan_items (
@@ -411,22 +418,23 @@ def insert_work_item(
             chash,
         ),
     )
-    return True
+    return vals
 
 
-def process_file(conn: sqlite3.Connection, fpath: Path) -> int:
-    """Process a single xlsx file. Returns number of work items inserted."""
+def process_file(conn: sqlite3.Connection, fpath: Path) -> tuple[int, list[dict]]:
+    """Process a single xlsx file. Returns (count, list_of_new_items)."""
     source_file = fpath.name
     file_date = parse_file_date(source_file).isoformat()
 
     if file_already_processed(conn, source_file):
         print(f"  SKIP (already processed): {source_file}")
-        return -1
+        return -1, []
 
     print(f"  Processing: {source_file} ({file_date})")
 
     wb = load_workbook(fpath, read_only=True, data_only=True)
     inserted = 0
+    new_items: list[dict] = []
     first_header_json = None
 
     for sheet_name in wb.sheetnames:
@@ -463,8 +471,10 @@ def process_file(conn: sqlite3.Connection, fpath: Path) -> int:
             uid_raw = raw_list[1] if len(raw_list) > 1 else None
             if not is_work_item(uid_raw):
                 continue
-            if insert_work_item(conn, source_file, file_date, col_map, raw_list):
+            result = insert_work_item(conn, source_file, file_date, col_map, raw_list)
+            if result is not None:
                 sheet_inserted += 1
+                new_items.append(result)
 
         if sheet_inserted > 0 and sheet_name != wb.sheetnames[0]:
             print(f"    Sheet '{sheet_name}': {sheet_inserted} work items")
@@ -478,7 +488,97 @@ def process_file(conn: sqlite3.Connection, fpath: Path) -> int:
     conn.commit()
 
     print(f"    Inserted {inserted} work items")
-    return inserted
+    return inserted, new_items
+
+
+# ── Email report ───────────────────────────────────────────────────────
+
+# Columns shown in the email report, in display order
+REPORT_COLS = [
+    ("item_id",         "Item ID"),
+    ("unique_id",       "Unique ID"),
+    ("name",            "Name"),
+    ("acronym",         "Acronym"),
+    ("release",         "Release"),
+    ("start_date",      "Start Date"),
+    ("finish_date",     "Finish Date"),
+    ("completion",      "Completion %"),
+    ("rapporteur_name", "Rapporteur"),
+    ("rapporteur_email","Rapporteur Email"),
+    ("status_report",   "Status Report"),
+    ("hyperlink",       "Hyperlink"),
+    ("resource_names",  "Resources"),
+    ("notes",           "Notes"),
+]
+
+
+def build_email_body(new_items: list[dict]) -> str:
+    """Build a plain-text email body listing the newly added work plan items."""
+    lines = [
+        f"3GPP Work Plan - {len(new_items)} new work plan item(s) were added.",
+        "",
+        f"Generated: {datetime.now().isoformat()}",
+        "",
+    ]
+    for i, item in enumerate(new_items, 1):
+        lines.append(f"{'=' * 70}")
+        lines.append(f"Item {i}:")
+        for key, label in REPORT_COLS:
+            val = item.get(key)
+            if val is not None and str(val).strip():
+                lines.append(f"  {label}: {val}")
+        lines.append("")
+    lines.append(f"{'=' * 70}")
+    lines.append("")
+    lines.append(f"Total new items: {len(new_items)}")
+    return "\n".join(lines)
+
+
+def send_report_email(new_items: list[dict]):
+    """Send an email report about newly added work plan items."""
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = os.environ.get("SMTP_PORT", "")
+    smtp_ssltls = os.environ.get("SMTP_SSLTLS", "").strip().lower() in (
+        "1", "true", "yes", "ssl", "tls", "ssl/tls", "starttls",
+    )
+    smtp_user = os.environ.get("SMTP_USERNAME", "")
+    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
+    to_raw = os.environ.get("TO", "")
+
+    if not smtp_host or not smtp_port or not to_raw:
+        print("Email report skipped: SMTP settings or TO not configured in .env")
+        return
+
+    recipients = [addr.strip() for addr in to_raw.split(",") if addr.strip()]
+    if not recipients:
+        print("Email report skipped: no recipients in TO")
+        return
+
+    subject = f"[3GPP Work Plan] {len(new_items)} new work plan item(s) added"
+    body = build_email_body(new_items)
+
+    msg = MIMEMultipart()
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    try:
+        if smtp_ssltls:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_host, int(smtp_port), context=context) as server:
+                if smtp_user and smtp_pass:
+                    server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
+                if smtp_user and smtp_pass:
+                    server.login(smtp_user, smtp_pass)
+                server.starttls()
+                server.sendmail(smtp_user, recipients, msg.as_string())
+        print(f"Report email sent to {', '.join(recipients)}")
+    except Exception as e:
+        print(f"Failed to send report email: {e}")
 
 
 # ── Main ────────────────────────────────────────────────────────────────
@@ -521,13 +621,22 @@ def main():
     # Step 4: Process each file
     print("\nProcessing files in chronological order...")
     total_inserted = 0
+    all_new_items: list[dict] = []
     for fpath in file_paths:
-        result = process_file(conn, fpath)
+        result, new_items = process_file(conn, fpath)
         if result >= 0:
             total_inserted += result
+            all_new_items.extend(new_items)
 
     # Summary
     print(f"\nDone. Total work items inserted this run: {total_inserted}")
+
+    # Step 5: Send email report if new items were added
+    if all_new_items:
+        print(f"\nSending email report for {len(all_new_items)} new work plan item(s)...")
+        send_report_email(all_new_items)
+    else:
+        print("\nNo new work plan items - skipping email report.")
 
     # DB stats
     file_count = conn.execute("SELECT COUNT(*) FROM work_plan_files").fetchone()[0]
