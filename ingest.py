@@ -563,18 +563,30 @@ def send_report_email(new_items: list[dict]):
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
+    context = ssl.create_default_context()
     try:
         if smtp_ssltls:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, int(smtp_port), context=context) as server:
-                if smtp_user and smtp_pass:
-                    server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, recipients, msg.as_string())
+            if int(smtp_port) == 465:
+                # Implicit TLS: the connection is encrypted from the start.
+                with smtplib.SMTP_SSL(smtp_host, 465, context=context) as server:
+                    if smtp_user and smtp_pass:
+                        server.login(smtp_user, smtp_pass)
+                    server.sendmail(smtp_user, recipients, msg.as_string())
+            else:
+                # Explicit TLS (STARTTLS): connect in plaintext, then upgrade,
+                # as used on ports such as 587.
+                with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
+                    server.ehlo()
+                    server.starttls(context=context)
+                    server.ehlo()
+                    if smtp_user and smtp_pass:
+                        server.login(smtp_user, smtp_pass)
+                    server.sendmail(smtp_user, recipients, msg.as_string())
         else:
+            # No encryption requested; connect in plaintext.
             with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
                 if smtp_user and smtp_pass:
                     server.login(smtp_user, smtp_pass)
-                server.starttls()
                 server.sendmail(smtp_user, recipients, msg.as_string())
         print(f"Report email sent to {', '.join(recipients)}")
     except Exception as e:
@@ -632,11 +644,8 @@ def main():
     print(f"\nDone. Total work items inserted this run: {total_inserted}")
 
     # Step 5: Send email report if new items were added
-    if all_new_items:
-        print(f"\nSending email report for {len(all_new_items)} new work plan item(s)...")
-        send_report_email(all_new_items)
-    else:
-        print("\nNo new work plan items - skipping email report.")
+    print(f"\nSending email report for {len(all_new_items)} new work plan item(s)...")
+    send_report_email(all_new_items)
 
     # DB stats
     file_count = conn.execute("SELECT COUNT(*) FROM work_plan_files").fetchone()[0]
