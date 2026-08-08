@@ -155,6 +155,10 @@ def asof_item_count(file_date):
         conn.close()
 
 
+# Whitelist for ORDER BY.  The *keys* are the only sort identifiers accepted
+# from the client; the *values* are hard-coded SQL fragments that are never
+# derived from user input.  This is the single source of truth for sorting and
+# is the key defense against SQL injection via the `sort` / `order` params.
 SORTABLE = {
     "id": "t.id",
     "name": "t.name COLLATE NOCASE",
@@ -168,11 +172,46 @@ SORTABLE = {
     "finish_date": "t.finish_date",
 }
 DEFAULT_SORT = "id"
+ORDER_DIRECTIONS = ("asc", "desc")
 
 
 def _like(value):
-    """Escape LIKE wildcards so user input is matched literally."""
+    """Escape LIKE wildcards so user input is matched literally.
+
+    A leading/trailing backslash would otherwise be interpreted as an escape
+    character by the `ESCAPE '\\'` clause, so we double every backslash first.
+    """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _safe_int(value):
+    """Coerce a request value to int, returning None for anything malformed.
+
+    Prevents invalid client input (e.g. ``?outline_level=abc``) from becoming a
+    raw ``int()`` / ``float()`` exception (HTTP 500) and guarantees that only a
+    plain integer ever reaches the parameterised SQL binder.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value):
+    """Coerce a request value to float, returning None for anything malformed.
+
+    Rejects non-finite values such as ``nan``/``inf`` which could otherwise be
+    smuggled in as a number and used to perturb an indexed comparison.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
 
 
 def query_items(snapshot_date, params):
@@ -213,9 +252,10 @@ def query_items(snapshot_date, params):
             args.extend(rels)
 
     outline = (params.get("outline_level") or "").strip()
-    if outline and outline.lower() != "all":
+    outline_int = _safe_int(outline)
+    if outline_int is not None and outline.lower() != "all":
         where.append("t.outline_level = ?")
-        args.append(int(outline))
+        args.append(int(outline_int))
 
     rapporteur = (params.get("rapporteur") or "").strip()
     if rapporteur and rapporteur.lower() != "all":
@@ -229,15 +269,23 @@ def query_items(snapshot_date, params):
 
     comp_min = params.get("completion_min")
     comp_max = params.get("completion_max")
-    if comp_min not in (None, ""):
+    comp_min_f = _safe_float(comp_min)
+    comp_max_f = _safe_float(comp_max)
+    if comp_min_f is not None:
         where.append("t.completion >= ?")
-        args.append(float(comp_min))
-    if comp_max not in (None, ""):
+        args.append(comp_min_f)
+    if comp_max_f is not None:
         where.append("t.completion <= ?")
-        args.append(float(comp_max))
+        args.append(comp_max_f)
 
     # Multiple sort criteria: comma-separated columns + comma-separated
     # directions, matched by position (priority order: first = primary).
+    #
+    # SECURITY: ``col`` is only ever used as a lookup key into SORTABLE and is
+    # NEVER interpolated into the SQL string directly.  The expression placed in
+    # the ORDER BY comes exclusively from the whitelist values, and the
+    # direction is coerced to a literal ASC/DESC.  Anything not recognised is
+    # dropped.  This closes the classic ORDER BY / paren injection vector.
     sort_columns = (params.get("sort") or DEFAULT_SORT).split(",")
     order_values = (params.get("order") or "asc").split(",")
     applied = []
@@ -255,10 +303,10 @@ def query_items(snapshot_date, params):
                 if v.strip():
                     raw_order = v.strip().lower()
                     break
-        if raw_order not in ("asc", "desc"):
+        if raw_order not in ORDER_DIRECTIONS:
             raw_order = "asc"
         applied.append({"col": col, "order": raw_order})
-        order_by.append(f"{SORTABLE[col]} {'ASC' if raw_order == 'asc' else 'DESC'}")
+        order_by.append(f"{SORTABLE[col]} {raw_order.upper()}")
     if not applied:  # fallback default sort
         applied.append({"col": DEFAULT_SORT, "order": "asc"})
         order_by.append(f"{SORTABLE[DEFAULT_SORT]} ASC")
@@ -373,6 +421,29 @@ def get_item_history(unique_id):
         conn.close()
 
 
+@app.after_request
+def add_security_headers(resp):
+    """Set security-related HTTP headers on every response."""
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'",
+    )
+    # API responses carry snapshot data; never let intermediate caches store it.
+    if request.path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
+
+
 @app.route("/")
 def index():
     return send_from_directory(STATIC_DIR, "index.html")
@@ -419,12 +490,21 @@ def api_item_history(unique_id):
 @app.errorhandler(404)
 def not_found(e):
     if request.path.startswith("/api/"):
-        return jsonify({"error": str(e.description or "not found")}), 404
+        # Return a generic message rather than echoing back the raw
+        # path / unique_id supplied by the caller.
+        return jsonify({"error": "not found"}), 404
     return send_from_directory(STATIC_DIR, "index.html")
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"3GPP Work Plan web app -> http://127.0.0.1:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Bind to loopback by default so this unauthenticated, read-only data
+    # service is not accidentally exposed to the whole network.  Set HOST
+    # (e.g. HOST=0.0.0.0) explicitly only if remote access is actually wanted.
+    host = os.environ.get("HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("PORT", 5000))
+    except (TypeError, ValueError):
+        port = 5000
+    print(f"3GPP Work Plan web app -> http://{host}:{port}")
+    app.run(host=host, port=port, debug=False)
 
