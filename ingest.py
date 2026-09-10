@@ -188,6 +188,19 @@ def normalize_int(val) -> int | None:
             return None
 
 
+def normalize_completion(val) -> int | None:
+    """Excel stores completion as a 0-1 fraction; store integer percent 0-100."""
+    if is_sentinel(val):
+        return None
+    try:
+        f = float(val)
+    except (ValueError, TypeError):
+        return None
+    if f <= 1:
+        return round(f * 100)
+    return round(f)
+
+
 def normalize_text(val) -> str | None:
     if is_sentinel(val):
         return None
@@ -361,7 +374,7 @@ def normalize_work_item(raw: dict) -> dict:
         'resource_names':  normalize_text(raw.get('resource_names')),
         'start_date':      normalize_timestamp(raw.get('start_date')),
         'finish_date':     normalize_timestamp(raw.get('finish_date')),
-        'completion':      normalize_int(raw.get('completion')),
+        'completion':      normalize_completion(raw.get('completion')),
         'hyperlink':       normalize_text(raw.get('hyperlink')),
         'status_report':   normalize_text(raw.get('status_report')),
         'rapporteur_name': normalize_text(raw.get('rapporteur_name')),
